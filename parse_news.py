@@ -3,12 +3,15 @@ import time
 from secret import token, mongo_pass
 import pandas as pd
 from pymongo import MongoClient
-import argparse
 import pprint
 
 token = token
 schema = 'https://api.vk.com/method/{method}?{param}&access_token={token}&v=5.103'
 mongo_pass = mongo_pass
+client = MongoClient(
+        f"mongodb+srv://Parapheen:{mongo_pass}@cluster0-gg2pa.mongodb.net/test?retryWrites=true&w=majority")
+db = client.ul
+posts = db['posts']
 
 class EsportsСlub:
     def __init__(self, line):
@@ -18,10 +21,11 @@ class EsportsСlub:
         self.source = '' #vk group url
         self.title = ''
         self.body = ''
+        self.short_body = ''
         self.pic = ''
-        self.date = ''
+        self.date = 0
         self.post_id = ''
-        self.views = ''
+        self.views = 0
 
     def recent_news(self):
         url = schema.format(method='wall.get', param=f'owner_id=-{self.owner_id}&count=1', token=token)
@@ -31,15 +35,17 @@ class EsportsСlub:
             if 'response' in r:
                 if 'text' in r['response']['items'][0]:
                     self.body = r['response']['items'][0]['text'].strip('\n')
+                    self.short_body = ' '.join(r['response']['items'][0]['text'].strip('\n').split(' ')[0:20])
                     self.title = self.body.split('\n')[0]
-                    if 'attachments' in r['response']['items']:
+                    if 'attachments' in r['response']['items'][0]:
                         if 'photo' in r['response']['items'][0]['attachments'][0]:
                             self.pic = r['response']['items'][0]['attachments'][0]['photo']['sizes'][0]['url']
-                    self.date = r['response']['items'][0]['date']
+                    self.date += r['response']['items'][0]['date']
                     self.post_id = r['response']['items'][0]['id']
                     self.source = f'vk.com/wall-{self.owner_id}_{self.post_id}'
+                    self.key = f'{self.owner_id}_{self.post_id}'
                     if 'views' in r['response']['items'][0]:
-                        self.views = int(r['response']['items'][0]['views']['count'])
+                        self.views += int(r['response']['items'][0]['views']['count'])
             else:
                 print(r)
         else:
@@ -55,27 +61,23 @@ class EsportsСlub:
         return
 
     def insert_res_mongo(self):
-        client = MongoClient(
-            f"mongodb+srv://Parapheen:{mongo_pass}@cluster0-gg2pa.mongodb.net/test?retryWrites=true&w=majority")
-        db = client.ul
-        posts = db['posts']
         self.key = f'{self.owner_id}_{self.post_id}'
-        if self.key not in db['posts'].find():
+        if self.key not in db['posts'].distinct('vk_id'):
             if len(self.body) > 0:
-                result = {'_id': self.key,
+                result = {'vk_id': self.key,
                         'name': self.name,
                         'club_id': self.owner_id,
                         'post_id': self.post_id,
                         'source_vk': self.source,
                         'title': self.title,
                         'body': self.body,
+                        'short_body': self.short_body,
                         'picture': self.pic,
                         'views': self.views,
                         'date': self.date}
 
                 posts.insert_one(result)
         return
-
 
 
 # Got the list of esports groups from BAUMAN ESPORTS
@@ -95,23 +97,29 @@ class EsportsСlub:
 if __name__ == '__main__':
     with open('groups.txt') as f:
         clubs = [line.strip('\n') for line in f]
-    res = dict()
+    result = dict()
     for club in clubs:
         print(club)
         club = EsportsСlub(club)
-        time.sleep(2)
+        time.sleep(1.5)
         club.get_club_name()
         club.recent_news()
-        club.insert_res_mongo()
-        # res[f'{club.owner_id}_{club.post_id}'] = {'name': club.name,
-        #                                         'club_id': club.owner_id,
-        #                                         'post_id': club.post_id,
-        #                                         'source_vk': club.source,
-        #                                         'title': club.title,
-        #                                         'body': club.body,
-        #                                         'picture': club.pic,
-        #                                         'views': club.views,
-        #                                         'date': club.date}
-    # df = pd.DataFrame.from_dict(res, orient='index').sort_values(by=['views']).to_csv('initial_res_28_12_19.csv', encoding='UTF-8')
-    # result = df.to_json()
-    # pprint.pprint(result)
+
+        if club.key not in posts.distinct('vk_id'):
+            if len(club.body) > 0:
+                if club.body != club.title or club.short_body != club.title:
+                    result[club.key] = {'vk_id': club.key,
+                            'name': club.name,
+                            'club_id': club.owner_id,
+                            'post_id': club.post_id,
+                            'source_vk': club.source,
+                            'title': club.title,
+                            'body': club.body,
+                            'short_body': club.short_body,
+                            'picture': club.pic,
+                            'views': club.views,
+                            'date': club.date}
+
+    df = pd.DataFrame.from_dict(result, orient='index').sort_values(by=['views'], ascending=False)
+    df.to_csv('initial_res_31_12_19.csv', encoding='UTF-8')
+    posts.insert_many(df.to_dict('records'))
