@@ -3,7 +3,8 @@ import time
 from secret import token, mongo_pass
 import pandas as pd
 from pymongo import MongoClient
-import pprint
+import datetime
+import re
 
 token = token
 schema = 'https://api.vk.com/method/{method}?{param}&access_token={token}&v=5.103'
@@ -79,6 +80,25 @@ class EsportsСlub:
                 posts.insert_one(result)
         return
 
+    def clean_body(self):
+        regex = r"\[(.*?)\]"
+        body = self.body
+        title = self.title
+
+        def repl(obj):
+            # print(obj.string)
+            vk_id = obj.group(0).split('|')[0][1::]
+            name = obj.group(0).split('|')[-1][0:-1]
+            return f'<a href="vk.com/{vk_id}">{name}</a>'
+
+
+        self.body = re.sub(regex, repl, body)
+        self.title = re.sub(regex, repl, title)
+        pass
+
+
+def sort_collection():
+    posts.find().sort('views', -1)
 
 # Got the list of esports groups from BAUMAN ESPORTS
 # def get_list_of_groups(domain):
@@ -99,12 +119,12 @@ if __name__ == '__main__':
         clubs = [line.strip('\n') for line in f]
     result = dict()
     for club in clubs:
-        print(club)
+        print('Club Name', club)
         club = EsportsСlub(club)
         time.sleep(1.5)
         club.get_club_name()
         club.recent_news()
-
+        club.clean_body()
         if club.key not in posts.distinct('vk_id'):
             if len(club.body) > 0:
                 if club.body != club.title or club.short_body != club.title:
@@ -121,5 +141,7 @@ if __name__ == '__main__':
                             'date': club.date}
 
     df = pd.DataFrame.from_dict(result, orient='index').sort_values(by=['views'], ascending=False)
-    df.to_csv('initial_res_31_12_19.csv', encoding='UTF-8')
+    date_for_file = datetime.datetime.now()
+    df.to_csv(f'{date_for_file}.csv', encoding='UTF-8')
     posts.insert_many(df.to_dict('records'))
+    sort_collection()
