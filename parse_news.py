@@ -6,6 +6,9 @@ from pymongo import MongoClient
 import datetime
 import re
 
+"""
+Initializating clients
+"""
 token = token
 schema = 'https://api.vk.com/method/{method}?{param}&access_token={token}&v=5.103'
 mongo_pass = mongo_pass
@@ -14,20 +17,28 @@ client = MongoClient(
 db = client.ul
 posts = db['posts']
 
+
+"""
+A class of an esports cafe
+"""
 class EsportsСlub:
     def __init__(self, line):
         self.key = ''
         self.name = '' #name of the esports group
         self.owner_id = line[1:-2].split('|')[0][4:] #owner_id
         self.source = '' #vk group url
-        self.title = ''
-        self.body = ''
-        self.short_body = ''
-        self.pic = ''
-        self.date = 0
-        self.post_id = ''
+        self.title = '' #title of the news
+        self.body = '' #body of the news
+        self.short_body = '' 
+        self.pictures = []
+        self.date = ''
+        self.post_id = '' #vk_post_id
         self.views = 0
+        self.unixtime = 0
 
+    """
+    Getting info via VK API
+    """
     def recent_news(self):
         url = schema.format(method='wall.get', param=f'owner_id=-{self.owner_id}&count=1', token=token)
         r = requests.get(url)
@@ -35,13 +46,14 @@ class EsportsСlub:
             r = r.json()
             if 'response' in r:
                 if 'text' in r['response']['items'][0]:
-                    self.body = r['response']['items'][0]['text'].strip('\n')
+                    self.body = r['response']['items'][0]['text'].replace('\n', '<br>')
                     self.short_body = ' '.join(r['response']['items'][0]['text'].strip('\n').split(' ')[0:20])
                     self.title = self.body.split('\n')[0]
                     if 'attachments' in r['response']['items'][0]:
-                        if 'photo' in r['response']['items'][0]['attachments'][0]:
-                            self.pic = r['response']['items'][0]['attachments'][0]['photo']['sizes'][0]['url']
-                    self.date += r['response']['items'][0]['date']
+                        pictures = list(filter(lambda x: x['type'] == 'photo', r['response']['items'][0]['attachments']))
+                        self.pictures = list(map(lambda x: x['photo']['sizes'][-1]['url'], pictures))
+                    self.unixtime = int(r['response']['items'][0]['date'])
+                    self.date = datetime.datetime.utcfromtimestamp(r['response']['items'][0]['date']).strftime('%Y-%m-%d %H:%M:%S')
                     self.post_id = r['response']['items'][0]['id']
                     self.source = f'vk.com/wall-{self.owner_id}_{self.post_id}'
                     self.key = f'{self.owner_id}_{self.post_id}'
@@ -52,7 +64,9 @@ class EsportsСlub:
         else:
             print(r)
         return
-
+    """
+    Convert input name from groups.txt to normal name
+    """
     def get_club_name(self):
         url = schema.format(method='groups.getById', param=f'group_id={self.owner_id}', token=token)
         r = requests.get(url)
@@ -61,46 +75,37 @@ class EsportsСlub:
             self.name = r['response'][0]['name']
         return
 
-    def insert_res_mongo(self):
-        self.key = f'{self.owner_id}_{self.post_id}'
-        if self.key not in db['posts'].distinct('vk_id'):
-            if len(self.body) > 0:
-                result = {'vk_id': self.key,
-                        'name': self.name,
-                        'club_id': self.owner_id,
-                        'post_id': self.post_id,
-                        'source_vk': self.source,
-                        'title': self.title,
-                        'body': self.body,
-                        'short_body': self.short_body,
-                        'picture': self.pic,
-                        'views': self.views,
-                        'date': self.date}
-
-                posts.insert_one(result)
-        return
-
+    """
+    regex to parse VK_format links to html tag <a>
+    """
     def clean_body(self):
         regex = r"\[(.*?)\]"
         body = self.body
+        short_body = self.short_body
         title = self.title
 
         def repl(obj):
             # print(obj.string)
             vk_id = obj.group(0).split('|')[0][1::]
             name = obj.group(0).split('|')[-1][0:-1]
-            return f'<a href="vk.com/{vk_id}">{name}</a>'
+            return f'<a href="https://vk.com/{vk_id}">{name}</a>'
 
 
         self.body = re.sub(regex, repl, body)
+        self.short_body = re.sub(regex, repl, short_body)
         self.title = re.sub(regex, repl, title)
         pass
 
-
+"""
+Sorting db
+"""
 def sort_collection():
-    posts.find().sort('views', -1)
+    db.posts.find().sort('unixtime', -1)
+    pass
 
-# Got the list of esports groups from BAUMAN ESPORTS
+"""
+Getting the list of esports groups from BAUMAN ESPORTS
+"""
 # def get_list_of_groups(domain):
 #     url = schema.format(method="wall.get", param=f'domain={domain}', token=token)
 #
@@ -136,12 +141,19 @@ if __name__ == '__main__':
                             'title': club.title,
                             'body': club.body,
                             'short_body': club.short_body,
-                            'picture': club.pic,
+                            'pictures': club.pictures,
                             'views': club.views,
-                            'date': club.date}
-
-    df = pd.DataFrame.from_dict(result, orient='index').sort_values(by=['views'], ascending=False)
-    date_for_file = datetime.datetime.now()
-    df.to_csv(f'{date_for_file}.csv', encoding='UTF-8')
-    posts.insert_many(df.to_dict('records'))
-    sort_collection()
+                            'date': club.date,
+                            'unixtime': club.unixtime}
+    if len(result) > 0:
+        """
+        Pandas sort and insert
+        """
+        df = pd.DataFrame.from_dict(result, orient='index').sort_values(by=['unixtime'], ascending=False)
+        date_for_file = datetime.datetime.now() 
+        df.to_csv(f'{date_for_file}.csv', encoding='UTF-8') #create csv with new items
+        posts.insert_many(df.to_dict('records'))
+        sort_collection()
+    else:
+        sort_collection()
+        print("No new posts to be put in mongo")

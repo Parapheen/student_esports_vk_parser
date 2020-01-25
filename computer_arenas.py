@@ -8,6 +8,9 @@ token = token
 schema = 'https://api.vk.com/method/{method}?{param}&access_token={token}&v=5.103'
 mongo_pass = mongo_pass
 
+"""
+This script scrapes info for the map of all internet cafes in Moscow
+"""
 class Computer_arena:
     def __init__(self, link):
         self.name = ''

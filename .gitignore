@@ -1,3 +1,5 @@
 # Mac/OSX
 .DS_Store
 secret.py
+.idea
+__pycache__
